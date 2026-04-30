@@ -43,6 +43,53 @@ function setMsg(id, text, ok = false) {
     if (text) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 5000);
 }
 
+// ─── CONTENT FILTER (Purgo Malum — free, no API key needed) ──────────────────
+// Returns { clean: string, wasDirty: boolean }
+async function filterText(text) {
+    if (!text || !text.trim()) return { clean: text, wasDirty: false };
+    try {
+        const url = `https://www.purgomalum.com/service/json?text=${encodeURIComponent(text)}`;
+        const res  = await fetch(url);
+        if (!res.ok) throw new Error('Filter API error');
+        const data = await res.json();
+        const clean = data.result ?? text;
+        // Purgo Malum replaces bad words with asterisks
+        const wasDirty = clean !== text;
+        return { clean, wasDirty };
+    } catch (err) {
+        // If filter is unavailable, fall back to a local basic filter
+        console.warn('PurgoMalum unavailable, using local fallback:', err.message);
+        return localFilter(text);
+    }
+}
+
+// ─── LOCAL FALLBACK FILTER ────────────────────────────────────────────────────
+// Catches the most common slurs/profanity if the API is down
+const LOCAL_BLOCKLIST = [
+    'fuck','shit','ass','bitch','bastard','cunt','dick','pussy',
+    'cock','asshole','motherfucker','faggot','nigger','nigga',
+    'retard','whore','slut','piss','damn','crap'
+];
+
+function localFilter(text) {
+    let clean = text;
+    let wasDirty = false;
+    LOCAL_BLOCKLIST.forEach(word => {
+        const re = new RegExp(`\\b${word}s?\\b`, 'gi');
+        if (re.test(clean)) {
+            wasDirty = true;
+            clean = clean.replace(re, m => '*'.repeat(m.length));
+        }
+    });
+    return { clean, wasDirty };
+}
+
+// Check if a username contains profanity (returns true = blocked)
+async function usernameIsDirty(name) {
+    const { wasDirty } = await filterText(name);
+    return wasDirty;
+}
+
 // ─── SCREENS ─────────────────────────────────────────────────────────────────
 function showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
@@ -118,6 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // ── Login ──
     document.getElementById('form-login').addEventListener('submit', async e => {
         e.preventDefault();
         const email = document.getElementById('login-email').value.trim();
@@ -133,6 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // ── Register — username filtered ──
     document.getElementById('form-register').addEventListener('submit', async e => {
         e.preventDefault();
         const uname = document.getElementById('reg-username').value.trim();
@@ -149,6 +198,15 @@ document.addEventListener('DOMContentLoaded', () => {
             setMsg('auth-msg', 'Please use a Gmail address (@gmail.com).');
             return;
         }
+
+        // ── Filter username ──
+        setMsg('auth-msg', 'Checking username…');
+        const dirty = await usernameIsDirty(uname);
+        if (dirty) {
+            setMsg('auth-msg', 'That username contains inappropriate language. Please choose another.');
+            return;
+        }
+
         try {
             const cred = await auth.createUserWithEmailAndPassword(email, pass);
             await createUserDoc(cred.user, uname);
@@ -157,11 +215,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // ── Username setup screen — filtered ──
     document.getElementById('form-username').addEventListener('submit', async e => {
         e.preventDefault();
         const uname = document.getElementById('setup-username').value.trim();
         if (uname.length < 2)  { setMsg('username-msg', 'At least 2 characters please.'); return; }
         if (uname.length > 24) { setMsg('username-msg', 'Max 24 characters.'); return; }
+
+        setMsg('username-msg', 'Checking username…');
+        const dirty = await usernameIsDirty(uname);
+        if (dirty) {
+            setMsg('username-msg', 'That username contains inappropriate language. Please choose another.');
+            return;
+        }
+
         try {
             const user = auth.currentUser;
             await createUserDoc(user, uname);
@@ -382,7 +449,11 @@ function renderMsg(msg) {
         bubbleClass += ' img-bubble';
         bubbleInner  = `<img src="${msg.imageBase64}" class="msg-img" alt="Image" onclick="viewImage(this)">`;
     } else {
+        // Show filtered text (stored already clean), or mark if flagged
         bubbleInner = esc(msg.text || '');
+        if (msg.wasFiltered) {
+            bubbleInner += `<span class="filter-badge" title="This message was filtered">🚫</span>`;
+        }
     }
 
     group.innerHTML = `
@@ -403,16 +474,32 @@ function renderMsg(msg) {
 function scrollDown() {
     const area = document.getElementById('messages-area');
     if (!area) return;
-    // rAF ensures the new DOM node is painted before we scroll
     requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
 }
 
-// ─── SEND TEXT MESSAGE ────────────────────────────────────────────────────────
+// ─── SEND TEXT MESSAGE — with content filter ─────────────────────────────────
 async function sendMessage() {
     const input = document.getElementById('compose-input');
-    const text  = input.value.trim();
-    if (!text || !currentChatId) return;
-    input.value = '';
+    const raw   = input.value.trim();
+    if (!raw || !currentChatId) return;
+
+    // Disable input while filtering to prevent double sends
+    input.disabled = true;
+    input.value    = '';
+
+    let text       = raw;
+    let wasFiltered = false;
+
+    try {
+        const result = await filterText(raw);
+        text        = result.clean;
+        wasFiltered = result.wasDirty;
+    } catch (err) {
+        console.warn('Filter failed, sending original:', err);
+    } finally {
+        input.disabled = false;
+        input.focus();
+    }
 
     const msg = {
         chatId:      currentChatId,
@@ -420,6 +507,7 @@ async function sendMessage() {
         senderName:  currentUserData.username,
         senderColor: currentUserData.color,
         text,
+        wasFiltered,
         timestamp:   firebase.firestore.FieldValue.serverTimestamp()
     };
 
@@ -427,7 +515,7 @@ async function sendMessage() {
         await db.collection('messages').add(msg);
         if (currentChatId !== 'global') {
             await db.collection('chats').doc(currentChatId).update({
-                lastMessage:   text,
+                lastMessage:   wasFiltered ? text : text,
                 lastTimestamp: firebase.firestore.FieldValue.serverTimestamp()
             });
         }
