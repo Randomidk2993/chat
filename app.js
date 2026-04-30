@@ -9,9 +9,9 @@ let db, auth;
 let currentUser     = null;
 let currentUserData = null;
 let currentChatId   = null;
-let msgUnsub        = null;   // message listener unsubscribe
-let chatsUnsub      = null;   // chats listener unsubscribe
-let lastDateStr     = null;   // for date separators
+let msgUnsub        = null;
+let chatsUnsub      = null;
+let lastDateStr     = null;
 
 // ─── AVATAR COLORS ───────────────────────────────────────────────────────────
 const PALETTE = [
@@ -49,11 +49,25 @@ function showScreen(id) {
     const el = document.getElementById(id);
     if (el) {
         el.classList.remove('hidden');
-        // Re-trigger animation
         el.style.animation = 'none';
-        el.offsetHeight; // reflow
+        el.offsetHeight;
         el.style.animation = '';
     }
+}
+
+// ─── MOBILE PANEL SWITCHING ───────────────────────────────────────────────────
+function isMobile() { return window.innerWidth <= 640; }
+
+function showChatOnMobile() {
+    if (!isMobile()) return;
+    document.querySelector('.conv-panel')?.classList.add('panel-hidden');
+    document.querySelector('.chat-panel')?.classList.add('panel-visible');
+}
+
+function showConvOnMobile() {
+    if (!isMobile()) return;
+    document.querySelector('.conv-panel')?.classList.remove('panel-hidden');
+    document.querySelector('.chat-panel')?.classList.remove('panel-visible');
 }
 
 // ─── AUTH TAB SWITCH ─────────────────────────────────────────────────────────
@@ -69,14 +83,14 @@ function switchTab(tab) {
 // ─── AUTH ERROR MESSAGES ─────────────────────────────────────────────────────
 function authError(code) {
     const map = {
-        'auth/user-not-found':      'No account found with that email.',
-        'auth/wrong-password':      'Incorrect password.',
-        'auth/invalid-credential':  'Invalid email or password.',
-        'auth/email-already-in-use':'That email is already registered.',
-        'auth/weak-password':       'Password must be at least 6 characters.',
-        'auth/invalid-email':       'Invalid email address.',
-        'auth/too-many-requests':   'Too many attempts — try again later.',
-        'auth/popup-closed-by-user':'Sign-in was cancelled.',
+        'auth/user-not-found':         'No account found with that email.',
+        'auth/wrong-password':         'Incorrect password.',
+        'auth/invalid-credential':     'Invalid email or password.',
+        'auth/email-already-in-use':   'That email is already registered.',
+        'auth/weak-password':          'Password must be at least 6 characters.',
+        'auth/invalid-email':          'Invalid email address.',
+        'auth/too-many-requests':      'Too many attempts — try again later.',
+        'auth/popup-closed-by-user':   'Sign-in was cancelled.',
         'auth/network-request-failed': 'Network error. Check your connection.',
     };
     return map[code] || `Error: ${code}`;
@@ -87,16 +101,11 @@ document.addEventListener('DOMContentLoaded', () => {
     db   = firebase.firestore();
     auth = firebase.auth();
 
-    // ── Auth state observer ──────────────────────────────
     auth.onAuthStateChanged(async user => {
-        if (!user) {
-            showScreen('screen-auth');
-            return;
-        }
+        if (!user) { showScreen('screen-auth'); return; }
         try {
             const snap = await db.collection('users').doc(user.uid).get();
             if (!snap.exists) {
-                // Google sign-in new user — pick username
                 showScreen('screen-username');
             } else {
                 currentUser     = user;
@@ -109,7 +118,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── Login form ───────────────────────────────────────
     document.getElementById('form-login').addEventListener('submit', async e => {
         e.preventDefault();
         const email = document.getElementById('login-email').value.trim();
@@ -125,7 +133,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── Register form ────────────────────────────────────
     document.getElementById('form-register').addEventListener('submit', async e => {
         e.preventDefault();
         const uname = document.getElementById('reg-username').value.trim();
@@ -150,7 +157,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── Username setup form ──────────────────────────────
     document.getElementById('form-username').addEventListener('submit', async e => {
         e.preventDefault();
         const uname = document.getElementById('setup-username').value.trim();
@@ -168,10 +174,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── Compose — send on Enter ──────────────────────────
     document.getElementById('compose-input').addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
+
+    // Mobile back button
+    document.getElementById('mobile-back-btn')?.addEventListener('click', showConvOnMobile);
 });
 
 // ─── GOOGLE SIGN-IN ───────────────────────────────────────────────────────────
@@ -194,19 +202,16 @@ async function createUserDoc(user, username) {
 // ─── BOOT APP ─────────────────────────────────────────────────────────────────
 function bootApp() {
     showScreen('screen-app');
-
-    // Avatars
     renderAvatar('sidebar-avatar', currentUserData.username, currentUserData.color);
     renderAvatar('footer-avatar',  currentUserData.username, currentUserData.color);
     document.getElementById('footer-username').textContent = currentUserData.username;
-
     loadConvList();
 }
 
 function renderAvatar(id, name, color) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.textContent    = initial(name);
+    el.textContent      = initial(name);
     el.style.background = color;
 }
 
@@ -217,7 +222,6 @@ function loadConvList() {
     const list = document.getElementById('conv-list');
     list.innerHTML = '';
 
-    // ── Global Chat (always pinned) ──
     const pinLabel = createLabel('<i class="fas fa-thumbtack"></i> Pinned');
     list.appendChild(pinLabel);
     list.appendChild(buildConvItem({
@@ -229,19 +233,15 @@ function loadConvList() {
         isGlobal: true
     }));
 
-    // ── DMs label ──
     const dmLabel = createLabel('<i class="fas fa-comment-dots"></i> Direct Messages');
     dmLabel.id = 'dm-section-label';
     list.appendChild(dmLabel);
 
-    // ── Live DM listener ──
     chatsUnsub = db.collection('chats')
         .where('participants', 'array-contains', currentUser.uid)
         .orderBy('lastTimestamp', 'desc')
         .onSnapshot(snap => {
-            // Remove existing DM items
             list.querySelectorAll('.conv-item.dm-item').forEach(el => el.remove());
-
             const label = document.getElementById('dm-section-label');
 
             snap.forEach(doc => {
@@ -254,15 +254,9 @@ function loadConvList() {
                 const sub        = data.lastMessage || 'No messages yet';
 
                 const item = buildConvItem({
-                    chatId:   doc.id,
-                    name:     otherName,
-                    sub,
-                    color:    otherColor,
-                    symbol:   null,
-                    timestamp: ts,
-                    isDM:     true
+                    chatId: doc.id, name: otherName, sub,
+                    color: otherColor, symbol: null, timestamp: ts, isDM: true
                 });
-                // Insert after the DM label
                 list.insertBefore(item, label.nextSibling);
             });
         }, err => console.error('Chats listener error:', err));
@@ -302,8 +296,7 @@ function fmtTime(date) {
     const diff = now - date;
     if (diff < 86400000 && date.toDateString() === now.toDateString())
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (new Date(now - 86400000).toDateString() === date.toDateString())
-        return 'Yesterday';
+    if (new Date(now - 86400000).toDateString() === date.toDateString()) return 'Yesterday';
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
@@ -319,14 +312,12 @@ function openChat(chatId, name, color, avatarContent) {
     currentChatId = chatId;
     lastDateStr   = null;
 
-    // Highlight active conv item
     document.querySelectorAll('.conv-item').forEach(el => {
         el.classList.toggle('active', el.dataset.chatId === chatId);
     });
 
-    // Update chat header
     const hdrAv = document.getElementById('chat-hdr-av');
-    hdrAv.textContent     = avatarContent;
+    hdrAv.textContent      = avatarContent;
     hdrAv.style.background = color;
     document.getElementById('chat-hdr-name').textContent = name;
     document.getElementById('chat-hdr-sub').textContent  =
@@ -336,6 +327,7 @@ function openChat(chatId, name, color, avatarContent) {
     document.getElementById('chat-main').classList.remove('hidden');
 
     listenMessages(chatId);
+    showChatOnMobile();
     document.getElementById('compose-input').focus();
 }
 
@@ -361,14 +353,13 @@ function listenMessages(chatId) {
 
 // ─── RENDER A MESSAGE ─────────────────────────────────────────────────────────
 function renderMsg(msg) {
-    const area  = document.getElementById('messages-area');
+    const area = document.getElementById('messages-area');
     if (!area) return;
 
-    const isOwn = msg.senderId === currentUser.uid;
-    const ts    = msg.timestamp ? msg.timestamp.toDate() : new Date();
+    const isOwn   = msg.senderId === currentUser.uid;
+    const ts      = msg.timestamp ? msg.timestamp.toDate() : new Date();
     const dateStr = ts.toDateString();
 
-    // Date separator
     if (dateStr !== lastDateStr) {
         lastDateStr = dateStr;
         const sep = document.createElement('div');
@@ -377,7 +368,7 @@ function renderMsg(msg) {
         area.appendChild(sep);
     }
 
-    const group   = document.createElement('div');
+    const group     = document.createElement('div');
     group.className = `msg-group ${isOwn ? 'own' : 'other'}`;
 
     const avColor   = isOwn ? currentUserData.color : (msg.senderColor || '#888');
@@ -385,7 +376,6 @@ function renderMsg(msg) {
     const sender    = isOwn ? 'You' : esc(msg.senderName || 'Unknown');
     const timeStr   = fmtTime(ts);
 
-    // Bubble content
     let bubbleClass = 'msg-bubble';
     let bubbleInner = '';
     if (msg.imageBase64) {
@@ -409,9 +399,12 @@ function renderMsg(msg) {
     area.appendChild(group);
 }
 
+// ─── SCROLL TO BOTTOM ─────────────────────────────────────────────────────────
 function scrollDown() {
     const area = document.getElementById('messages-area');
-    if (area) area.scrollTop = area.scrollHeight;
+    if (!area) return;
+    // rAF ensures the new DOM node is painted before we scroll
+    requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
 }
 
 // ─── SEND TEXT MESSAGE ────────────────────────────────────────────────────────
@@ -453,11 +446,10 @@ function handleImage(input) {
     reader.onload = e => {
         const img = new Image();
         img.onload = () => {
-            const canvas  = document.createElement('canvas');
-            const MAX     = 800;
-            let [w, h]    = [img.width, img.height];
+            const canvas = document.createElement('canvas');
+            const MAX    = 800;
+            let [w, h]   = [img.width, img.height];
 
-            // Resize keeping aspect ratio
             if (w > MAX || h > MAX) {
                 if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
                 else        { w = Math.round(w * MAX / h); h = MAX; }
@@ -468,19 +460,16 @@ function handleImage(input) {
             canvas.getContext('2d').drawImage(img, 0, 0, w, h);
 
             const base64 = canvas.toDataURL('image/jpeg', 0.65);
-
-            // Firestore document limit is ~1MB; base64 adds ~37% overhead
             if (base64.length > 900_000) {
                 alert('Image is too large after compression. Please use a smaller or lower-resolution image.');
                 return;
             }
-
             postImage(base64);
         };
         img.src = e.target.result;
     };
     reader.readAsDataURL(file);
-    input.value = ''; // reset so same file can be re-selected
+    input.value = '';
 }
 
 async function postImage(base64) {
@@ -521,7 +510,7 @@ function viewImage(imgEl) {
 
 // ─── USER SEARCH / DM ─────────────────────────────────────────────────────────
 function toggleSearch() {
-    const box = document.getElementById('search-box');
+    const box  = document.getElementById('search-box');
     const open = box.classList.contains('hidden');
     box.classList.toggle('hidden', !open);
     if (open) {
@@ -564,9 +553,7 @@ async function searchUsers(query) {
             results.appendChild(row);
         });
 
-        if (!any) {
-            results.innerHTML = '<div class="search-result-item empty">No users found</div>';
-        }
+        if (!any) results.innerHTML = '<div class="search-result-item empty">No users found</div>';
     } catch (err) {
         console.error('Search error:', err);
     }
@@ -603,8 +590,8 @@ async function openOrCreateDM(otherId, otherUser) {
 
 // ─── LOGOUT ───────────────────────────────────────────────────────────────────
 function logout() {
-    if (msgUnsub)    msgUnsub();
-    if (chatsUnsub)  chatsUnsub();
+    if (msgUnsub)   msgUnsub();
+    if (chatsUnsub) chatsUnsub();
     currentUser     = null;
     currentUserData = null;
     currentChatId   = null;
