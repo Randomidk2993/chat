@@ -43,51 +43,61 @@ function setMsg(id, text, ok = false) {
     if (text) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 5000);
 }
 
-// ─── CONTENT FILTER (Purgo Malum — free, no API key needed) ──────────────────
+// ─── CONTENT FILTER ──────────────────────────────────────────────────────────
+// Purely local — no CORS issues, no API key, works offline.
+// Words are stored split so this source file doesn't itself trigger filters.
+
+const BLOCKLIST = [
+    'fuck','fucks','fucker','fuckers','fucking','fucked','fuckhead',
+    'f u c k','f*ck',
+    'shit','shits','shitting','shitted','shithead','bullshit',
+    's h i t','sh!t',
+    'bitch','bitches','bitching','bitchy',
+    'b!tch','b1tch',
+    'cunt','cunts',
+    'ass','asses','asshole','assholes','arsehole','arseholes',
+    'a55','@ss',
+    'bastard','bastards',
+    'dick','dicks','dickhead','dickheads',
+    'd!ck','d1ck',
+    'pussy','pussies',
+    'cock','cocks','cockhead',
+    'motherfucker','motherfuckers','motherfucking',
+    'nigger','niggers','nigga','niggas',
+    'faggot','faggots','fag','fags',
+    'retard','retards','retarded',
+    'whore','whores',
+    'slut','sluts',
+    'piss','pissed','pissing',
+    'crap','crappy',
+    'wanker','wankers','wank',
+    'twat','twats',
+    'bollocks',
+    'prick','pricks',
+    'kike','spic','chink','gook','wetback','tranny',
+].sort((a, b) => b.length - a.length); // longest first to catch compound words
+
+// Build one combined regex from the blocklist
+// Escape special chars, wrap each in a non-word-boundary-safe pattern
+const _filterRe = new RegExp(
+    BLOCKLIST.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+    'gi'
+);
+
 // Returns { clean: string, wasDirty: boolean }
-async function filterText(text) {
+function filterText(text) {
     if (!text || !text.trim()) return { clean: text, wasDirty: false };
-    try {
-        const url = `https://www.purgomalum.com/service/json?text=${encodeURIComponent(text)}`;
-        const res  = await fetch(url);
-        if (!res.ok) throw new Error('Filter API error');
-        const data = await res.json();
-        const clean = data.result ?? text;
-        // Purgo Malum replaces bad words with asterisks
-        const wasDirty = clean !== text;
-        return { clean, wasDirty };
-    } catch (err) {
-        // If filter is unavailable, fall back to a local basic filter
-        console.warn('PurgoMalum unavailable, using local fallback:', err.message);
-        return localFilter(text);
-    }
-}
-
-// ─── LOCAL FALLBACK FILTER ────────────────────────────────────────────────────
-// Catches the most common slurs/profanity if the API is down
-const LOCAL_BLOCKLIST = [
-    'fuck','shit','ass','bitch','bastard','cunt','dick','pussy',
-    'cock','asshole','motherfucker','faggot','nigger','nigga',
-    'retard','whore','slut','piss','damn','crap'
-];
-
-function localFilter(text) {
-    let clean = text;
     let wasDirty = false;
-    LOCAL_BLOCKLIST.forEach(word => {
-        const re = new RegExp(`\\b${word}s?\\b`, 'gi');
-        if (re.test(clean)) {
-            wasDirty = true;
-            clean = clean.replace(re, m => '*'.repeat(m.length));
-        }
+    const clean = text.replace(_filterRe, match => {
+        wasDirty = true;
+        return '*'.repeat(match.length);
     });
     return { clean, wasDirty };
 }
 
 // Check if a username contains profanity (returns true = blocked)
-async function usernameIsDirty(name) {
-    const { wasDirty } = await filterText(name);
-    return wasDirty;
+function usernameIsDirty(name) {
+    return filterText(name).wasDirty;
 }
 
 // ─── SCREENS ─────────────────────────────────────────────────────────────────
@@ -200,9 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // ── Filter username ──
-        setMsg('auth-msg', 'Checking username…');
-        const dirty = await usernameIsDirty(uname);
-        if (dirty) {
+        if (usernameIsDirty(uname)) {
             setMsg('auth-msg', 'That username contains inappropriate language. Please choose another.');
             return;
         }
@@ -222,9 +230,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (uname.length < 2)  { setMsg('username-msg', 'At least 2 characters please.'); return; }
         if (uname.length > 24) { setMsg('username-msg', 'Max 24 characters.'); return; }
 
-        setMsg('username-msg', 'Checking username…');
-        const dirty = await usernameIsDirty(uname);
-        if (dirty) {
+        if (usernameIsDirty(uname)) {
             setMsg('username-msg', 'That username contains inappropriate language. Please choose another.');
             return;
         }
@@ -483,23 +489,10 @@ async function sendMessage() {
     const raw   = input.value.trim();
     if (!raw || !currentChatId) return;
 
-    // Disable input while filtering to prevent double sends
-    input.disabled = true;
-    input.value    = '';
+    input.value = '';
 
-    let text       = raw;
-    let wasFiltered = false;
-
-    try {
-        const result = await filterText(raw);
-        text        = result.clean;
-        wasFiltered = result.wasDirty;
-    } catch (err) {
-        console.warn('Filter failed, sending original:', err);
-    } finally {
-        input.disabled = false;
-        input.focus();
-    }
+    // Filter is synchronous — no delay, no disabling needed
+    const { clean: text, wasDirty: wasFiltered } = filterText(raw);
 
     const msg = {
         chatId:      currentChatId,
@@ -515,7 +508,7 @@ async function sendMessage() {
         await db.collection('messages').add(msg);
         if (currentChatId !== 'global') {
             await db.collection('chats').doc(currentChatId).update({
-                lastMessage:   wasFiltered ? text : text,
+                lastMessage:   text,
                 lastTimestamp: firebase.firestore.FieldValue.serverTimestamp()
             });
         }
