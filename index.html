@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -173,9 +173,7 @@
                 <div id="search-results" class="search-results-list"></div>
             </div>
 
-            <div class="conv-list" id="conv-list">
-                <!-- Injected by JS -->
-            </div>
+            <div class="conv-list" id="conv-list"></div>
 
             <div class="conv-panel-footer">
                 <div id="footer-avatar" class="footer-av"></div>
@@ -200,7 +198,6 @@
             <div id="chat-main" class="chat-main hidden">
                 <div class="chat-header">
                     <div class="chat-hdr-left">
-                        <!-- Mobile back button — hidden on desktop via CSS -->
                         <button class="mobile-back-btn" id="mobile-back-btn" aria-label="Back to conversations">
                             <i class="fas fa-chevron-left"></i>
                         </button>
@@ -230,11 +227,11 @@
     </div>
 </div>
 
-<!-- Firebase CDN (free, no billing) -->
+<!-- Firebase CDN -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
